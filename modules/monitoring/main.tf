@@ -36,30 +36,30 @@ resource "azurerm_monitor_action_group" "main" {
   tags = var.tags
 }
 
-# Metric Alert for App Service CPU
-resource "azurerm_monitor_metric_alert" "app_service_cpu" {
-  name                = "${var.workspace_name}-app-service-cpu"
-  resource_group_name = var.resource_group_name
-  scopes              = [var.app_service_id]
-  description         = "Action will be triggered when App Service CPU is high"
-  severity            = 2
-  frequency           = "PT1M"
-  window_size         = "PT5M"
-
-  criteria {
-    metric_namespace = "Microsoft.Web/sites"
-    metric_name      = "CpuPercentage"
-    aggregation      = "Average"
-    operator         = "GreaterThan"
-    threshold        = 80
-  }
-
-  action {
-    action_group_id = azurerm_monitor_action_group.main.id
-  }
-
-  tags = var.tags
-}
+# Metric Alert for App Service CPU - Commented out due to metric availability
+# resource "azurerm_monitor_metric_alert" "app_service_cpu" {
+#   name                = "${var.workspace_name}-app-service-cpu"
+#   resource_group_name = var.resource_group_name
+#   scopes              = [var.app_service_id]
+#   description         = "Action will be triggered when App Service CPU is high"
+#   severity            = 2
+#   frequency           = "PT1M"
+#   window_size         = "PT5M"
+#
+#   criteria {
+#     metric_namespace = "Microsoft.Web/sites"
+#     metric_name      = "CpuPercentage"
+#     aggregation      = "Average"
+#     operator         = "GreaterThan"
+#     threshold        = 80
+#   }
+#
+#   action {
+#     action_group_id = azurerm_monitor_action_group.main.id
+#   }
+#
+#   tags = var.tags
+# }
 
 # Metric Alert for SQL Database DTU
 resource "azurerm_monitor_metric_alert" "sql_dtu" {
@@ -72,7 +72,7 @@ resource "azurerm_monitor_metric_alert" "sql_dtu" {
   window_size         = "PT5M"
 
   criteria {
-    metric_namespace = "Microsoft.Sql/servers/databases"
+    metric_namespace = "Microsoft.Sql/servers"
     metric_name      = "dtu_consumption_percent"
     aggregation      = "Average"
     operator         = "GreaterThan"
