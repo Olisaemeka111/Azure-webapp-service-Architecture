@@ -1,0 +1,124 @@
+name: 'Terraform Apply'
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '**/*.tf'
+      - '**/*.tfvars'
+      - '.github/workflows/terraform-apply.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+        - production
+        - staging
+        - development
+
+env:
+  TF_VERSION: '1.12.2'
+  AZURE_CLI_VERSION: '2.53.0'
+
+jobs:
+  terraform-apply:
+    name: 'Terraform Apply'
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'production' }}
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TF_VERSION }}
+
+    - name: Setup Azure CLI
+      uses: azure/setup-azcli@v1
+      with:
+        azure-cli-version: ${{ env.AZURE_CLI_VERSION }}
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Terraform Init
+      run: terraform init
+      working-directory: ./
+
+    - name: Terraform Validate
+      run: terraform validate
+      working-directory: ./
+
+    - name: Terraform Plan
+      run: terraform plan -no-color -out=tfplan
+      working-directory: ./
+      env:
+        TF_VAR_project_name: ${{ secrets.TF_VAR_PROJECT_NAME }}
+        TF_VAR_environment: ${{ github.event.inputs.environment || 'production' }}
+
+    - name: Terraform Apply
+      run: terraform apply -auto-approve tfplan
+      working-directory: ./
+      env:
+        TF_VAR_project_name: ${{ secrets.TF_VAR_PROJECT_NAME }}
+        TF_VAR_environment: ${{ github.event.inputs.environment || 'production' }}
+
+    - name: Terraform Output
+      run: terraform output -json
+      working-directory: ./
+      id: terraform-output
+
+    - name: Update Deployment Status
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const outputs = JSON.parse('${{ steps.terraform-output.outputs }}');
+          
+          const comment = `
+          ## 🚀 Infrastructure Deployment Complete
+          
+          **Environment:** ${{ github.event.inputs.environment || 'production' }}
+          **Commit:** ${{ github.sha }}
+          **Triggered by:** ${{ github.actor }}
+          
+          ### 📋 Deployment Summary
+          - **Resource Group:** ${outputs.resource_group_name?.value || 'N/A'}
+          - **Location:** ${outputs.resource_group_location?.value || 'N/A'}
+          - **App Service:** ${outputs.app_service_name?.value || 'N/A'}
+          - **SQL Server:** ${outputs.sql_server_name?.value || 'N/A'}
+          - **Front Door:** ${outputs.front_door_name?.value || 'N/A'}
+          
+          ### 🔗 Access URLs
+          - **App Service URL:** ${outputs.app_service_url?.value || 'N/A'}
+          - **Front Door URL:** ${outputs.front_door_url?.value || 'N/A'}
+          
+          ### 📊 Monitoring
+          - **Log Analytics Workspace ID:** ${outputs.log_analytics_workspace_id?.value || 'N/A'}
+          - **Application Insights ID:** ${outputs.application_insights_id?.value || 'N/A'}
+          `;
+          
+          // Create a deployment status
+          github.rest.repos.createDeploymentStatus({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            deployment_id: context.payload.deployment?.id,
+            state: 'success',
+            description: 'Infrastructure deployed successfully',
+            environment: '${{ github.event.inputs.environment || "production" }}'
+          });
+
+    - name: Upload Terraform State
+      uses: actions/upload-artifact@v4
+      with:
+        name: terraform-state-${{ github.event.inputs.environment || 'production' }}
+        path: |
+          terraform.tfstate
+          terraform.tfstate.backup
+        retention-days: 30

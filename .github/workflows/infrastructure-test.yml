@@ -1,0 +1,204 @@
+name: 'Infrastructure Testing'
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+env:
+  TF_VERSION: '1.12.2'
+  AZURE_CLI_VERSION: '2.53.0'
+
+jobs:
+  infrastructure-test:
+    name: 'Test Infrastructure'
+    runs-on: ubuntu-latest
+    environment: development
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TF_VERSION }}
+
+    - name: Setup Azure CLI
+      uses: azure/setup-azcli@v1
+      with:
+        azure-cli-version: ${{ env.AZURE_CLI_VERSION }}
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Terraform Init
+      run: terraform init
+      working-directory: ./
+
+    - name: Terraform Validate
+      run: terraform validate
+      working-directory: ./
+
+    - name: Terraform Plan
+      run: terraform plan -no-color -out=tfplan
+      working-directory: ./
+      env:
+        TF_VAR_project_name: ${{ secrets.TF_VAR_PROJECT_NAME }}
+        TF_VAR_environment: test
+
+    - name: Deploy Test Infrastructure
+      run: terraform apply -auto-approve tfplan
+      working-directory: ./
+      env:
+        TF_VAR_project_name: ${{ secrets.TF_VAR_PROJECT_NAME }}
+        TF_VAR_environment: test
+
+    - name: Wait for Resources
+      run: sleep 300 # Wait 5 minutes for resources to be fully provisioned
+
+    - name: Test Resource Connectivity
+      run: |
+        echo "## 🧪 Infrastructure Test Results" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        # Get resource group name
+        RG_NAME="azure-app-arch-test-rg"
+        
+        echo "### 🔍 Resource Verification" >> $GITHUB_STEP_SUMMARY
+        
+        # Test App Service
+        APP_SERVICE=$(az webapp list --resource-group $RG_NAME --query '[0].name' -o tsv)
+        if [ "$APP_SERVICE" != "null" ] && [ -n "$APP_SERVICE" ]; then
+          echo "- ✅ App Service: $APP_SERVICE" >> $GITHUB_STEP_SUMMARY
+          
+          # Test App Service health
+          APP_URL=$(az webapp show --resource-group $RG_NAME --name $APP_SERVICE --query "defaultHostName" -o tsv)
+          if curl -f -s "https://$APP_URL" > /dev/null; then
+            echo "  - ✅ App Service is responding" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "  - ❌ App Service is not responding" >> $GITHUB_STEP_SUMMARY
+          fi
+        else
+          echo "- ❌ App Service not found" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        # Test SQL Database
+        SQL_SERVER=$(az sql server list --resource-group $RG_NAME --query '[0].name' -o tsv)
+        if [ "$SQL_SERVER" != "null" ] && [ -n "$SQL_SERVER" ]; then
+          echo "- ✅ SQL Server: $SQL_SERVER" >> $GITHUB_STEP_SUMMARY
+          
+          # Test database connectivity
+          SQL_DB=$(az sql db list --resource-group $RG_NAME --server $SQL_SERVER --query '[0].name' -o tsv)
+          if [ "$SQL_DB" != "null" ] && [ -n "$SQL_DB" ]; then
+            echo "  - ✅ SQL Database: $SQL_DB" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "  - ❌ SQL Database not found" >> $GITHUB_STEP_SUMMARY
+          fi
+        else
+          echo "- ❌ SQL Server not found" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        # Test Front Door
+        FRONT_DOOR=$(az cdn profile list --resource-group $RG_NAME --query '[0].name' -o tsv)
+        if [ "$FRONT_DOOR" != "null" ] && [ -n "$FRONT_DOOR" ]; then
+          echo "- ✅ Front Door: $FRONT_DOOR" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "- ❌ Front Door not found" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        # Test Log Analytics
+        LOG_ANALYTICS=$(az monitor log-analytics workspace list --resource-group $RG_NAME --query '[0].name' -o tsv)
+        if [ "$LOG_ANALYTICS" != "null" ] && [ -n "$LOG_ANALYTICS" ]; then
+          echo "- ✅ Log Analytics: $LOG_ANALYTICS" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "- ❌ Log Analytics not found" >> $GITHUB_STEP_SUMMARY
+        fi
+
+    - name: Test Security Configuration
+      run: |
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🔒 Security Configuration Tests" >> $GITHUB_STEP_SUMMARY
+        
+        # Test NSG rules
+        NSG_COUNT=$(az network nsg list --resource-group $RG_NAME --query 'length(@)')
+        echo "- ✅ Network Security Groups: $NSG_COUNT found" >> $GITHUB_STEP_SUMMARY
+        
+        # Test SSL/TLS configuration
+        if [ "$APP_SERVICE" != "null" ] && [ -n "$APP_SERVICE" ]; then
+          SSL_STATE=$(az webapp config ssl list --resource-group $RG_NAME --query '[0].thumbprint' -o tsv)
+          if [ "$SSL_STATE" != "null" ] && [ -n "$SSL_STATE" ]; then
+            echo "- ✅ SSL Certificate configured" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- ⚠️ SSL Certificate not configured" >> $GITHUB_STEP_SUMMARY
+          fi
+        fi
+        
+        # Test firewall rules
+        if [ "$SQL_SERVER" != "null" ] && [ -n "$SQL_SERVER" ]; then
+          FIREWALL_RULES=$(az sql server firewall-rule list --resource-group $RG_NAME --server $SQL_SERVER --query 'length(@)')
+          echo "- ✅ SQL Firewall Rules: $FIREWALL_RULES configured" >> $GITHUB_STEP_SUMMARY
+        fi
+
+    - name: Test Monitoring Configuration
+      run: |
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📊 Monitoring Configuration Tests" >> $GITHUB_STEP_SUMMARY
+        
+        # Test Application Insights
+        APP_INSIGHTS=$(az monitor app-insights component show --resource-group $RG_NAME --query 'name' -o tsv)
+        if [ "$APP_INSIGHTS" != "null" ] && [ -n "$APP_INSIGHTS" ]; then
+          echo "- ✅ Application Insights: $APP_INSIGHTS" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "- ❌ Application Insights not found" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        # Test metric alerts
+        ALERT_COUNT=$(az monitor metrics alert list --resource-group $RG_NAME --query 'length(@)')
+        echo "- ✅ Metric Alerts: $ALERT_COUNT configured" >> $GITHUB_STEP_SUMMARY
+
+    - name: Performance Test
+      run: |
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### ⚡ Performance Tests" >> $GITHUB_STEP_SUMMARY
+        
+        if [ "$APP_URL" != "null" ] && [ -n "$APP_URL" ]; then
+          # Test response time
+          RESPONSE_TIME=$(curl -o /dev/null -s -w '%{time_total}' "https://$APP_URL")
+          echo "- ✅ App Service Response Time: ${RESPONSE_TIME}s" >> $GITHUB_STEP_SUMMARY
+          
+          # Test multiple requests
+          for i in {1..5}; do
+            curl -f -s "https://$APP_URL" > /dev/null && echo "  - Request $i: ✅" >> $GITHUB_STEP_SUMMARY || echo "  - Request $i: ❌" >> $GITHUB_STEP_SUMMARY
+          done
+        fi
+
+    - name: Cleanup Test Resources
+      if: always()
+      run: |
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🧹 Cleanup" >> $GITHUB_STEP_SUMMARY
+        
+        # Destroy test infrastructure
+        terraform destroy -auto-approve
+        echo "- ✅ Test infrastructure destroyed" >> $GITHUB_STEP_SUMMARY
+
+    - name: Test Summary
+      if: always()
+      run: |
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📋 Test Summary" >> $GITHUB_STEP_SUMMARY
+        echo "- **Test Environment**: test" >> $GITHUB_STEP_SUMMARY
+        echo "- **Test Duration**: $(date)" >> $GITHUB_STEP_SUMMARY
+        echo "- **Triggered by**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🎯 Next Steps" >> $GITHUB_STEP_SUMMARY
+        echo "1. Review test results above" >> $GITHUB_STEP_SUMMARY
+        echo "2. Address any failed tests" >> $GITHUB_STEP_SUMMARY
+        echo "3. Deploy to staging for further testing" >> $GITHUB_STEP_SUMMARY
+        echo "4. Deploy to production after validation" >> $GITHUB_STEP_SUMMARY

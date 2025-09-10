@@ -1,0 +1,125 @@
+name: 'Terraform Destroy'
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to destroy'
+        required: true
+        default: 'development'
+        type: choice
+        options:
+        - development
+        - staging
+        - production
+      confirm_destroy:
+        description: 'Type "DESTROY" to confirm'
+        required: true
+        type: string
+
+env:
+  TF_VERSION: '1.12.2'
+  AZURE_CLI_VERSION: '2.53.0'
+
+jobs:
+  terraform-destroy:
+    name: 'Terraform Destroy'
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+
+    steps:
+    - name: Validate Confirmation
+      run: |
+        if [ "${{ github.event.inputs.confirm_destroy }}" != "DESTROY" ]; then
+          echo "❌ Confirmation failed. You must type 'DESTROY' to proceed."
+          exit 1
+        fi
+        echo "✅ Confirmation received. Proceeding with destruction..."
+
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TF_VERSION }}
+
+    - name: Setup Azure CLI
+      uses: azure/setup-azcli@v1
+      with:
+        azure-cli-version: ${{ env.AZURE_CLI_VERSION }}
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Terraform Init
+      run: terraform init
+      working-directory: ./
+
+    - name: Terraform Validate
+      run: terraform validate
+      working-directory: ./
+
+    - name: Terraform Plan Destroy
+      run: terraform plan -destroy -no-color -out=destroy-plan
+      working-directory: ./
+      env:
+        TF_VAR_project_name: ${{ secrets.TF_VAR_PROJECT_NAME }}
+        TF_VAR_environment: ${{ github.event.inputs.environment }}
+
+    - name: Terraform Destroy
+      run: terraform apply -auto-approve destroy-plan
+      working-directory: ./
+      env:
+        TF_VAR_project_name: ${{ secrets.TF_VAR_PROJECT_NAME }}
+        TF_VAR_environment: ${{ github.event.inputs.environment }}
+
+    - name: Update Destruction Status
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const comment = `
+          ## 🗑️ Infrastructure Destruction Complete
+          
+          **Environment:** ${{ github.event.inputs.environment }}
+          **Commit:** ${{ github.sha }}
+          **Triggered by:** ${{ github.actor }}
+          
+          ⚠️ **All resources in the ${{ github.event.inputs.environment }} environment have been destroyed.**
+          
+          This action cannot be undone. If you need to recreate the infrastructure, 
+          you can run the Terraform Apply workflow again.
+          `;
+          
+          // Create a deployment status
+          github.rest.repos.createDeploymentStatus({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            deployment_id: context.payload.deployment?.id,
+            state: 'success',
+            description: 'Infrastructure destroyed successfully',
+            environment: '${{ github.event.inputs.environment }}'
+          });
+
+    - name: Cleanup Artifacts
+      uses: actions/github-script@v7
+      with:
+        script: |
+          // List and delete old artifacts for this environment
+          const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            run_id: context.runId
+          });
+          
+          for (const artifact of artifacts.data.artifacts) {
+            if (artifact.name.includes('${{ github.event.inputs.environment }}')) {
+              await github.rest.actions.deleteArtifact({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                artifact_id: artifact.id
+              });
+            }
+          }

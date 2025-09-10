@@ -1,0 +1,101 @@
+name: 'Terraform Plan'
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - '**/*.tf'
+      - '**/*.tfvars'
+      - '.github/workflows/terraform-plan.yml'
+
+env:
+  TF_VERSION: '1.12.2'
+  AZURE_CLI_VERSION: '2.53.0'
+
+jobs:
+  terraform-plan:
+    name: 'Terraform Plan'
+    runs-on: ubuntu-latest
+    environment: development
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TF_VERSION }}
+
+    - name: Setup Azure CLI
+      uses: azure/setup-azcli@v3
+      with:
+        azure-cli-version: ${{ env.AZURE_CLI_VERSION }}
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Terraform Format Check
+      run: terraform fmt -check -recursive
+      working-directory: ./
+
+    - name: Terraform Init
+      run: terraform init
+      working-directory: ./
+
+    - name: Terraform Validate
+      run: terraform validate
+      working-directory: ./
+
+    - name: Terraform Plan
+      run: terraform plan -no-color -out=tfplan
+      working-directory: ./
+      env:
+        TF_VAR_project_name: ${{ secrets.TF_VAR_PROJECT_NAME }}
+        TF_VAR_environment: development
+
+    - name: Upload Terraform Plan
+      uses: actions/upload-artifact@v4
+      with:
+        name: terraform-plan
+        path: tfplan
+        retention-days: 5
+
+    - name: Comment PR with Plan
+      uses: actions/github-script@v7
+      if: github.event_name == 'pull_request'
+      with:
+        script: |
+          const fs = require('fs');
+          const { execSync } = require('child_process');
+          
+          try {
+            const planOutput = execSync('terraform show -no-color tfplan', { 
+              encoding: 'utf8',
+              cwd: './'
+            });
+            
+            const output = `
+            ## Terraform Plan Results
+            
+            <details>
+            <summary>Show Plan</summary>
+            
+            \`\`\`terraform
+            ${planOutput}
+            \`\`\`
+            
+            </details>
+            `;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            });
+          } catch (error) {
+            console.log('Error creating comment:', error);
+          }
