@@ -1,0 +1,22 @@
+Azure App Service Architecture - Dangling Resources Check
+========================================================
+Generated: Thu Sep 11 12:33:58 BST 2025
+Subscription: 9b8b49a9-222a-4179-b2a7-20fd90dd0264
+Resource Group: azure-app-arch-prod-rg
+
+CHECK RESULTS:
+==============
+
+Resource Group Check: ✅ CLEAN
+Name Pattern Check: ✅ CLEAN
+Tag Check: ✅ CLEAN
+Resource Type Check: ✅ CLEAN
+Private DNS Zones: ✅ CLEAN
+Storage Accounts: ✅ CLEAN
+Key Vaults: ✅ CLEAN
+Managed Identities: ✅ CLEAN
+Cost Management: ✅ CLEAN
+
+FILES GENERATED:
+================
+./dangling-resources-report/dangling_resources_summary_20250911_123258.txt
